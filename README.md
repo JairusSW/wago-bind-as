@@ -185,7 +185,7 @@ The generated `Vec3` facade benchmark includes two native struct writes, one Wag
 | Apple M4 Max, Darwin/arm64   |          76.9–80.1 ns/op |           0 |
 | Ryzen 7 7800X3D, Linux/amd64 |          69.0–70.7 ns/op |           0 |
 
-Ten 750 ms samples were run with Go 1.26.5 on arm64 and Go 1.22.2 on amd64 against Wago `v0.1.0-beta.8`. The transform replaces AssemblyScript's imported `env.abort` with a local `unreachable()` trap, allowing Wago to select its import-free prepared-entry path. This preserves trapping but omits formatted abort messages and source locations. See [the Modus performance research](docs/research/modus-performance.md) for the design comparison and previous baselines.
+Ten 750 ms samples were run with Go 1.26.5 on arm64 and Go 1.22.2 on amd64 against Wago `v0.1.0-beta.8`. The transform replaces AssemblyScript's imported `env.abort` with a local `unreachable()` trap, allowing Wago to select its import-free prepared-entry path. This preserves trapping but omits formatted abort messages and source locations.
 
 The checked Wago binding benchmark calls a guest that validates a 56-byte root and UTF-8 span, compares the five-byte prefix `admin`, and changes one `f32` field.
 
@@ -212,10 +212,6 @@ go test ./build/testdata/velocity -run '^$' -bench BenchmarkGeneratedVelocityCal
 cd bench
 go test -run '^$' -bench 'Benchmark(WagoBindAS|WagoPreparedFloor|BuildNativeInput)$' -benchmem -benchtime=750ms -count=5
 ```
-
-## Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the Exact32 layout, trust boundaries, generation model, generated-code contracts, and roadmap.
 
 The lower-level wire-view request example is in [`examples/request`](examples/request); the schema-free typed facade is exercised end-to-end by the transform integration test.
 
