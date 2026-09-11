@@ -1,0 +1,6 @@
+assembly/**/*.ts
+examples/**/*.ts
+transform/__tests__/fixture.ts
+transform/lib/
+build/
+node_modules/

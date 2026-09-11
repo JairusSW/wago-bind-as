@@ -1,0 +1,32 @@
+{
+  "package": "request",
+  "types": [
+    {
+      "name": "Header",
+      "fields": [
+        { "name": "name", "type": "utf8" },
+        { "name": "value", "type": "utf8" }
+      ]
+    },
+    {
+      "name": "User",
+      "fields": [
+        { "name": "id", "type": "u64" },
+        { "name": "name", "type": "utf8" }
+      ]
+    },
+    {
+      "name": "Request",
+      "fields": [
+        { "name": "id", "type": "u64" },
+        { "name": "score", "type": "f32" },
+        { "name": "flags", "type": "u32" },
+        { "name": "name", "type": "utf8" },
+        { "name": "body", "type": "bytes" },
+        { "name": "headers", "type": "vec<Header>" },
+        { "name": "user", "type": "ref<User>" },
+        { "name": "timestamp", "type": "timestamp_ns" }
+      ]
+    }
+  ]
+}

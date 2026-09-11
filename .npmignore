@@ -1,0 +1,8 @@
+.github/
+bench/
+examples/
+**/*_test.go
+transform/src/
+transform/tsconfig.json
+transform/__tests__/
+*.map

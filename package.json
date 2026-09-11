@@ -1,0 +1,57 @@
+{
+  "name": "wago-bind-as",
+  "version": "0.1.0",
+  "author": "Jairus Tanaka <me@jairus.dev>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JairusSW/wago-bind-as.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JairusSW/wago-bind-as/issues"
+  },
+  "description": "Zero-copy shared-memory bindings between Go and AssemblyScript on Wago",
+  "keywords": [
+    "assemblyscript",
+    "webassembly",
+    "wago",
+    "bindings",
+    "zero-copy",
+    "shared-memory"
+  ],
+  "license": "MIT",
+  "main": "transform/lib/index.js",
+  "types": "assembly/index.ts",
+  "files": [
+    "assembly/",
+    "cmd/wago-bind-as/main.go",
+    "generate/generate.go",
+    "gobind/gobind.go",
+    "schema/schema.go",
+    "go.mod",
+    "go.sum",
+    "transform/lib/",
+    "transform/package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:transform",
+    "build:transform": "rm -rf transform/lib && tsc -p transform",
+    "typecheck": "tsc -p transform --noEmit",
+    "test:transform": "node --test transform/__tests__/*.test.mjs",
+    "test": "npm run build && npm run test:transform",
+    "format": "prettier -w .",
+    "check": "npm run typecheck && npm run test",
+    "prepublishOnly": "npm run check"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "assemblyscript": "^0.28.18",
+    "prettier": "3.8.3",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module"
+}

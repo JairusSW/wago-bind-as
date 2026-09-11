@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "package": "request",
+  "fingerprint": "e42b59cb8021533f60c510edc31da0f9",
+  "types": [
+    {
+      "name": "Header",
+      "size": 16,
+      "align": 4,
+      "fields": [
+        {
+          "name": "name",
+          "type": "utf8",
+          "offset": 0,
+          "size": 8,
+          "align": 4
+        },
+        {
+          "name": "value",
+          "type": "utf8",
+          "offset": 8,
+          "size": 8,
+          "align": 4
+        }
+      ]
+    },
+    {
+      "name": "Request",
+      "size": 56,
+      "align": 8,
+      "fields": [
+        {
+          "name": "id",
+          "type": "u64",
+          "offset": 0,
+          "size": 8,
+          "align": 8
+        },
+        {
+          "name": "score",
+          "type": "f32",
+          "offset": 8,
+          "size": 4,
+          "align": 4
+        },
+        {
+          "name": "flags",
+          "type": "u32",
+          "offset": 12,
+          "size": 4,
+          "align": 4
+        },
+        {
+          "name": "name",
+          "type": "utf8",
+          "offset": 16,
+          "size": 8,
+          "align": 4
+        },
+        {
+          "name": "body",
+          "type": "bytes",
+          "offset": 24,
+          "size": 8,
+          "align": 4
+        },
+        {
+          "name": "headers",
+          "type": "vec\u003cHeader\u003e",
+          "offset": 32,
+          "size": 12,
+          "align": 4
+        },
+        {
+          "name": "user",
+          "type": "ref\u003cUser\u003e",
+          "offset": 44,
+          "size": 4,
+          "align": 4
+        },
+        {
+          "name": "timestamp",
+          "type": "timestamp_ns",
+          "offset": 48,
+          "size": 8,
+          "align": 8
+        }
+      ]
+    },
+    {
+      "name": "User",
+      "size": 16,
+      "align": 8,
+      "fields": [
+        {
+          "name": "id",
+          "type": "u64",
+          "offset": 0,
+          "size": 8,
+          "align": 8
+        },
+        {
+          "name": "name",
+          "type": "utf8",
+          "offset": 8,
+          "size": 8,
+          "align": 4
+        }
+      ]
+    }
+  ]
+}
