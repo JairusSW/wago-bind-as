@@ -1,5 +1,11 @@
 <div align="center">
   <h1><code>wago-bind-as</code></h1>
+  <p>
+    <a href="https://github.com/JairusSW/wago-bind-as/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JairusSW/wago-bind-as/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://www.npmjs.com/package/wago-bind-as"><img alt="npm" src="https://img.shields.io/npm/v/wago-bind-as"></a>
+    <a href="https://pkg.go.dev/github.com/JairusSW/wago-bind-as"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/JairusSW/wago-bind-as.svg"></a>
+    <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/JairusSW/wago-bind-as"></a>
+  </p>
   <p>Zero-copy, generated bindings between Go and AssemblyScript on Wago</p>
 </div>
 
@@ -17,7 +23,6 @@ The bytes in WebAssembly linear memory are the object. Go and AssemblyScript acc
 - [Ownership and safety](#ownership-and-safety)
 - [Wire types](#wire-types)
 - [Performance](#performance)
-- [Architecture](#architecture)
 - [Development](#development)
 - [License](#license)
 - [Contact](#contact)
