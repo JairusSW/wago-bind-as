@@ -190,35 +190,35 @@ The generated `Vec3` facade benchmark includes two native struct writes, one Wag
 
 | Host                         | Typed `GetVelocity` call | Allocations |
 | ---------------------------- | -----------------------: | ----------: |
-| Apple M4 Max, Darwin/arm64   |          76.9–80.1 ns/op |           0 |
-| Ryzen 7 7800X3D, Linux/amd64 |          69.0–70.7 ns/op |           0 |
+| Apple M4 Max, Darwin/arm64   |        73.03–73.74 ns/op |           0 |
+| Ryzen 7 7800X3D, Linux/amd64 |        68.31–72.46 ns/op |           0 |
 
-Ten 750 ms samples were run with Go 1.26.5 on arm64 and Go 1.22.2 on amd64 against Wago `v0.1.0-beta.8`. The transform replaces AssemblyScript's imported `env.abort` with a local `unreachable()` trap, allowing Wago to select its import-free prepared-entry path. This preserves trapping but omits formatted abort messages and source locations.
+Ten 750 ms samples were run with Go 1.26.5 on arm64 and Go 1.22.2 on amd64 using wago-bind-as [`81c85c5`](https://github.com/JairusSW/wago-bind-as/commit/81c85c54512f830814ec726c025dba4ac5ea81c7) against Wago `main` at [`317a693`](https://github.com/wago-org/wago/commit/317a69310db31f2e0d8d184fc1504523e4a4ca64). The transform replaces AssemblyScript's imported `env.abort` with a local `unreachable()` trap, allowing Wago to select its import-free prepared-entry path. This preserves trapping but omits formatted abort messages and source locations.
 
-The checked Wago binding benchmark calls a guest that validates a 56-byte root and UTF-8 span, compares the five-byte prefix `admin`, and changes one `f32` field.
+The checked Wago binding benchmark calls a guest that validates a 56-byte root and UTF-8 span, compares the five-byte prefix `admin`, and changes one `f32` field. The prepared-call floor invokes that already-prepared, import-free guest directly without Wago Bind's region checks.
 
-| Host                         |      Empty body | 32 KiB untouched body | Allocations |
-| ---------------------------- | --------------: | --------------------: | ----------: |
-| Apple M4 Max, Darwin/arm64   | 74.3–75.3 ns/op |       74.9–76.0 ns/op |           0 |
-| Ryzen 7 7800X3D, Linux/amd64 | 63.8–66.2 ns/op |       63.9–65.5 ns/op |           0 |
+| Host                         |        Empty body | 32 KiB untouched body | Prepared-call floor | Allocations |
+| ---------------------------- | ----------------: | --------------------: | ------------------: | ----------: |
+| Apple M4 Max, Darwin/arm64   | 73.83–75.74 ns/op |     74.92–75.59 ns/op |   52.35–53.45 ns/op |           0 |
+| Ryzen 7 7800X3D, Linux/amd64 | 63.97–66.56 ns/op |     63.96–67.06 ns/op |   42.08–43.22 ns/op |           0 |
 
 These are call/access measurements over an already-built wire object. The important result is that the untouched 32 KiB body does not change call latency. The benchmark reports latency only: it intentionally does not derive throughput from bytes the guest never reads.
 
 Construction from the example native Go input is measured separately. It includes UTF-8 and body copies into final Wasm memory:
 
-| Host                         | Empty body | 32 KiB body copy | Allocations |
-| ---------------------------- | ---------: | ---------------: | ----------: |
-| Apple M4 Max, Darwin/arm64   | 315–325 ns |     0.87–1.03 µs |           0 |
-| Ryzen 7 7800X3D, Linux/amd64 | 588–597 ns |     1.35–1.37 µs |           0 |
+| Host                         |     Empty body | 32 KiB body copy | Allocations |
+| ---------------------------- | -------------: | ---------------: | ----------: |
+| Apple M4 Max, Darwin/arm64   | 478.5–497.4 ns |   1.109–1.224 µs |           0 |
+| Ryzen 7 7800X3D, Linux/amd64 | 905.2–916.1 ns |   1.655–1.782 µs |           0 |
 
 Run the benchmark locally:
 
 ```bash
 npm test # builds the generated Vec3 integration fixture
-go test ./build/testdata/velocity -run '^$' -bench BenchmarkGeneratedVelocityCall -benchmem -benchtime=750ms -count=5
+go test ./build/testdata/velocity -run '^$' -bench BenchmarkGeneratedVelocityCall -benchmem -benchtime=750ms -count=10
 
 cd bench
-go test -run '^$' -bench 'Benchmark(WagoBindAS|WagoPreparedFloor|BuildNativeInput)$' -benchmem -benchtime=750ms -count=5
+go test -run '^$' -bench 'Benchmark(WagoBindAS|WagoPreparedFloor|BuildNativeInput)$' -benchmem -benchtime=750ms -count=10
 ```
 
 The lower-level wire-view request example is in [`examples/request`](examples/request); the schema-free typed facade is exercised end-to-end by the transform integration test.
