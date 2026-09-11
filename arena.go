@@ -151,12 +151,15 @@ func (a *Arena) ReserveBytes(length, align uint32) (Span, []byte, error) {
 	if err != nil {
 		return Span{}, nil, err
 	}
-	return Span{Offset: offset, Length: length}, bytes, nil
+	return Span{Offset: offset, Length: length, region: a.Region()}, bytes, nil
 }
 
 // ValidateUTF8 verifies a directly-filled span before assigning it to an
 // `utf8` field.
 func (a *Arena) ValidateUTF8(span Span) error {
+	if err := a.Region().sameRegion(span.region); err != nil {
+		return err
+	}
 	bytes, err := a.Region().resolve(span.Offset, span.Length, 1, false)
 	if err != nil {
 		return err
@@ -165,6 +168,40 @@ func (a *Arena) ValidateUTF8(span Span) error {
 		return ErrInvalidUTF8
 	}
 	return nil
+}
+
+// PutRecordUTF8 allocates and installs a UTF-8 span only when record belongs
+// to this arena's current generation.
+func (a *Arena) PutRecordUTF8(record Record, field uint32, value string) error {
+	if err := a.Region().sameRegion(record.region); err != nil {
+		return err
+	}
+	checkpoint := a.Checkpoint()
+	span, err := a.PutUTF8(value)
+	if err == nil {
+		err = record.SetRegionSpan(field, span)
+	}
+	if err != nil {
+		_ = a.Rollback(checkpoint)
+	}
+	return err
+}
+
+// PutRecordBytes allocates and installs a byte span only when record belongs
+// to this arena's current generation.
+func (a *Arena) PutRecordBytes(record Record, field uint32, value []byte) error {
+	if err := a.Region().sameRegion(record.region); err != nil {
+		return err
+	}
+	checkpoint := a.Checkpoint()
+	span, err := a.PutBytes(value, 1)
+	if err == nil {
+		err = record.SetRegionSpan(field, span)
+	}
+	if err != nil {
+		_ = a.Rollback(checkpoint)
+	}
+	return err
 }
 
 // BeginImage reserves the detached Exact32 envelope at region offset zero.
@@ -216,7 +253,22 @@ func (a *Arena) PutUTF8(value string) (Span, error) {
 // GrowVector replaces a vector payload with a larger same-region allocation.
 // Existing views still refer to the old allocation and must be reacquired.
 func (a *Arena) GrowVector(record Offset, field, stride, align, minimumCapacity uint32) (Vector, error) {
-	r := a.Region()
+	return a.growVector(a.Region(), record, field, stride, align, minimumCapacity)
+}
+
+// GrowRecordVector grows a vector descriptor only when its parent record
+// belongs to this arena's current generation.
+func (a *Arena) GrowRecordVector(record Record, field, stride, align, minimumCapacity uint32) (Vector, error) {
+	if err := a.Region().sameRegion(record.region); err != nil {
+		return Vector{}, err
+	}
+	if _, err := record.field(field, 12, 4, true); err != nil {
+		return Vector{}, err
+	}
+	return a.growVector(record.region, record.offset, field, stride, align, minimumCapacity)
+}
+
+func (a *Arena) growVector(r Region, record Offset, field, stride, align, minimumCapacity uint32) (Vector, error) {
 	v, err := r.Vector(record, field, stride, align)
 	if err != nil {
 		return Vector{}, err

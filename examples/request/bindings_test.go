@@ -1,6 +1,7 @@
 package request
 
 import (
+	"errors"
 	"testing"
 
 	bindas "github.com/JairusSW/wago-bind-as"
@@ -41,6 +42,32 @@ func TestGeneratedTypedVectorAccess(t *testing.T) {
 	}
 }
 
+func TestGeneratedViewsPreserveRegionProvenance(t *testing.T) {
+	first, _ := bindas.NewArena(make([]byte, 1024), 0, 1024)
+	second, _ := bindas.NewArena(make([]byte, 1024), 0, 1024)
+	request, err := BuildRequest(first, RequestInput{User: &UserInput{Name: "first"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := BuildUser(second, UserInput{Name: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := request.SetUser(foreign); !errors.Is(err, bindas.ErrRegionMismatch) {
+		t.Fatalf("cross-region reference error = %v", err)
+	}
+	if err := request.SetNameString(second, "wrong"); !errors.Is(err, bindas.ErrRegionMismatch) {
+		t.Fatalf("cross-region string error = %v", err)
+	}
+	if _, err := request.ReserveHeaders(second, 1); !errors.Is(err, bindas.ErrRegionMismatch) {
+		t.Fatalf("cross-region vector error = %v", err)
+	}
+	first.Reset()
+	if _, err := request.User(); !errors.Is(err, bindas.ErrStale) {
+		t.Fatalf("stale child error = %v", err)
+	}
+}
+
 func TestGeneratedNativeInputBuilder(t *testing.T) {
 	arena, _ := bindas.NewArena(make([]byte, 4096), 0, 4096)
 	request, err := BuildRequest(arena, RequestInput{
@@ -65,7 +92,7 @@ func TestGeneratedNativeInputBuilder(t *testing.T) {
 	if !value.EqualString("application/json") {
 		t.Fatal("header value mismatch")
 	}
-	user, err := request.User(arena.Region())
+	user, err := request.User()
 	if err != nil {
 		t.Fatal(err)
 	}

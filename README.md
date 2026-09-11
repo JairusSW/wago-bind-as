@@ -119,6 +119,8 @@ velocity, err := module.GetVelocity(
 
 The inferred function facade currently supports records made from fixed-width scalar fields. Void functions accept up to four record parameters; record-returning functions accept three because the fourth allocation-free call argument points to reusable result storage. A result returned directly as `new Result(...)` is treated as owned and reclaimed by the generated wrapper before it returns; returning one of the input parameters is borrowed. The transform rejects ambiguous ownership instead of guessing.
 
+This initial facade deliberately enforces a narrow safe subset. A lowered record may only be allocated as the direct final result of a binding; helper and temporary allocations of that class are rejected because lowered classes are unmanaged. Result returns inside branches or loops are rejected until ownership can be tracked per control-flow edge. Boundary types must also have one unambiguous local name: qualified, renamed, unresolved, and duplicate same-name declarations fail compilation. `Utf8` and `Bytes` remain available in the schema-driven wire-view API below, but are rejected in automatically lowered classes until descriptor property access can be lowered to Exact32's four-byte alignment.
+
 ## Go-authored models
 
 Go can be the source of truth when AssemblyScript should import an existing Go model. Point the declaration at a generated `.bind.ts` file:
@@ -160,6 +162,7 @@ Important rules:
 
 - Do not retain `Record`, `SpanView`, `UTF8View`, `Vector`, slices, or borrowed strings outside their documented scope.
 - Reacquire views after guest execution. Descriptors may have changed.
+- Generated child, reference, span, and vector operations preserve region identity. Cross-arena assignment and allocation fail with `ErrRegionMismatch`; stale parents fail with `ErrStale`.
 - `BorrowedString` is explicitly unsafe to retain or use across mutation. `CopyString` owns its result.
 - Mutable access is serialized. Do not invoke or close the same Wago instance through another handle concurrently.
 - Host imports should use `WithGuestRegion`; it borrows memory through Wago's callback-scoped `GuestStorage` lifecycle gate.
@@ -199,7 +202,7 @@ The checked Wago binding benchmark calls a guest that validates a 56-byte root a
 | Apple M4 Max, Darwin/arm64   | 74.3–75.3 ns/op |       74.9–76.0 ns/op |           0 |
 | Ryzen 7 7800X3D, Linux/amd64 | 63.8–66.2 ns/op |       63.9–65.5 ns/op |           0 |
 
-These are call/access measurements over an already-built wire object. The important result is that the untouched 32 KiB body does not change call latency.
+These are call/access measurements over an already-built wire object. The important result is that the untouched 32 KiB body does not change call latency. The benchmark reports latency only: it intentionally does not derive throughput from bytes the guest never reads.
 
 Construction from the example native Go input is measured separately. It includes UTF-8 and body copies into final Wasm memory:
 

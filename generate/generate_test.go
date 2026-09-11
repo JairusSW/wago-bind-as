@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -103,6 +104,10 @@ func TestGoRejectsGeneratedIdentifierCollisions(t *testing.T) {
 		{Package: "collision", Types: []schema.Type{{Name: "Value", Fields: []schema.Field{{Name: "score", Type: "f32"}, {Name: "setScore", Type: "u32"}}}}},
 		{Package: "collision", Types: []schema.Type{{Name: "Value", Fields: []schema.Field{{Name: "id", Type: "u8"}}}, {Name: "value", Fields: []schema.Field{{Name: "id", Type: "u8"}}}}},
 		{Package: "collision", Types: []schema.Type{{Name: "Fingerprint", Fields: []schema.Field{{Name: "id", Type: "u8"}}}}},
+		{Package: "collision", Types: []schema.Type{{Name: "Module", Fields: []schema.Field{{Name: "id", Type: "u8"}}}}, Functions: []schema.Function{{Name: "use", Parameters: []schema.Parameter{{Name: "value", Type: "Module"}}}}},
+		{Package: "collision", Types: []schema.Type{{Name: "Bind", Fields: []schema.Field{{Name: "id", Type: "u8"}}}}, Functions: []schema.Function{{Name: "use", Parameters: []schema.Parameter{{Name: "value", Type: "Bind"}}}}},
+		{Package: "collision", Types: []schema.Type{{Name: "Value", Fields: []schema.Field{{Name: "id", Type: "u8"}}}}, Functions: []schema.Function{{Name: "mu", Parameters: []schema.Parameter{{Name: "value", Type: "Value"}}}}},
+		{Package: "collision", Types: []schema.Type{{Name: "Value", Fields: []schema.Field{{Name: "id", Type: "u8"}}}}, Functions: []schema.Function{{Name: "memory", Parameters: []schema.Parameter{{Name: "value", Type: "Value"}}}}},
 	} {
 		manifest, err := schema.Compile(source)
 		if err != nil {
@@ -141,5 +146,50 @@ func TestGoScalarFacadeUsesOnlyNeededAllocationFreeImports(t *testing.T) {
 	}
 	if !bytes.Contains(output, []byte("if memory[address+0] > 1")) {
 		t.Fatalf("generated bool facade does not validate its wire value:\n%s", output)
+	}
+}
+
+func TestGeneratedFacadeSignatureMatrixCompiles(t *testing.T) {
+	value := schema.Type{Name: "Value", Fields: []schema.Field{{Name: "n", Type: "u32"}}}
+	parameter := func(name string) schema.Parameter { return schema.Parameter{Name: name, Type: "Value"} }
+	functions := []schema.Function{
+		{Name: "void1", Parameters: []schema.Parameter{parameter("a")}},
+		{Name: "void2", Parameters: []schema.Parameter{parameter("a"), parameter("b")}},
+		{Name: "void3", Parameters: []schema.Parameter{parameter("a"), parameter("b"), parameter("c")}},
+		{Name: "void4", Parameters: []schema.Parameter{parameter("a"), parameter("b"), parameter("c"), parameter("d")}},
+		{Name: "result0", Result: "Value"},
+		{Name: "result1", Parameters: []schema.Parameter{parameter("a")}, Result: "Value"},
+		{Name: "result2", Parameters: []schema.Parameter{parameter("a"), parameter("b")}, Result: "Value"},
+		{Name: "result3", Parameters: []schema.Parameter{parameter("a"), parameter("b"), parameter("c")}, Result: "Value"},
+	}
+	manifest, err := schema.Compile(schema.Schema{Package: "matrix", Types: []schema.Type{value}, Functions: functions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := Go(manifest, "matrix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compileGeneratedPackage(t, output)
+}
+
+func compileGeneratedPackage(t *testing.T, generated []byte) {
+	t.Helper()
+	directory := t.TempDir()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := fmt.Sprintf("module generated.test\n\ngo 1.22\n\nrequire github.com/JairusSW/wago-bind-as v0.0.0\nreplace github.com/JairusSW/wago-bind-as => %s\n", filepath.ToSlash(root))
+	if err := os.WriteFile(filepath.Join(directory, "go.mod"), []byte(module), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "bindings.go"), generated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "test", "-mod=mod", "./...")
+	command.Dir = directory
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generated package does not compile: %v\n%s", err, output)
 	}
 }

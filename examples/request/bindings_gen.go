@@ -42,11 +42,7 @@ func (v HeaderView) NameUTF8() (bindas.UTF8View, error) {
 	return value.UTF8()
 }
 func (v HeaderView) SetNameString(arena *bindas.Arena, value string) error {
-	span, err := arena.PutUTF8(value)
-	if err != nil {
-		return err
-	}
-	return v.SetName(span)
+	return arena.PutRecordUTF8(v.record, 0, value)
 }
 
 func (v HeaderView) Value() (bindas.SpanView, error)  { return v.record.RegionSpan(8) }
@@ -59,11 +55,7 @@ func (v HeaderView) ValueUTF8() (bindas.UTF8View, error) {
 	return value.UTF8()
 }
 func (v HeaderView) SetValueString(arena *bindas.Arena, value string) error {
-	span, err := arena.PutUTF8(value)
-	if err != nil {
-		return err
-	}
-	return v.SetValue(span)
+	return arena.PutRecordUTF8(v.record, 8, value)
 }
 
 type Header struct {
@@ -137,26 +129,18 @@ func (v RequestView) NameUTF8() (bindas.UTF8View, error) {
 	return value.UTF8()
 }
 func (v RequestView) SetNameString(arena *bindas.Arena, value string) error {
-	span, err := arena.PutUTF8(value)
-	if err != nil {
-		return err
-	}
-	return v.SetName(span)
+	return arena.PutRecordUTF8(v.record, 16, value)
 }
 
 func (v RequestView) Body() (bindas.SpanView, error)  { return v.record.RegionSpan(24) }
 func (v RequestView) SetBody(value bindas.Span) error { return v.record.SetRegionSpan(24, value) }
 func (v RequestView) SetBodyBytes(arena *bindas.Arena, value []byte) error {
-	span, err := arena.PutBytes(value, 1)
-	if err != nil {
-		return err
-	}
-	return v.SetBody(span)
+	return arena.PutRecordBytes(v.record, 24, value)
 }
 
 func (v RequestView) Headers() (bindas.Vector, error) { return v.record.RegionVector(32, 16, 4) }
 func (v RequestView) ReserveHeaders(arena *bindas.Arena, capacity uint32) (bindas.Vector, error) {
-	return arena.GrowVector(v.Offset(), 32, 16, 4, capacity)
+	return arena.GrowRecordVector(v.record, 32, 16, 4, capacity)
 }
 
 func (v RequestView) HeadersAt(index uint32) (HeaderView, error) {
@@ -176,16 +160,11 @@ func (v RequestView) AppendHeaders() (HeaderView, error) {
 	return HeaderView{record: record}, err
 }
 
-func (v RequestView) User(region bindas.Region) (UserView, error) {
-	offset, err := v.record.Uint32(44)
-	if err != nil {
-		return UserView{}, err
-	}
-	return OpenUser(region, bindas.Offset(offset))
+func (v RequestView) User() (UserView, error) {
+	record, err := v.record.Reference(44, UserSize, UserAlign)
+	return UserView{record: record}, err
 }
-func (v RequestView) SetUser(value UserView) error {
-	return v.record.SetUint32(44, uint32(value.Offset()))
-}
+func (v RequestView) SetUser(value UserView) error { return v.record.SetReference(44, value.record) }
 
 func (v RequestView) Timestamp() (int64, error)      { return v.record.Int64(48) }
 func (v RequestView) SetTimestamp(value int64) error { return v.record.SetInt64(48, value) }
@@ -299,11 +278,7 @@ func (v UserView) NameUTF8() (bindas.UTF8View, error) {
 	return value.UTF8()
 }
 func (v UserView) SetNameString(arena *bindas.Arena, value string) error {
-	span, err := arena.PutUTF8(value)
-	if err != nil {
-		return err
-	}
-	return v.SetName(span)
+	return arena.PutRecordUTF8(v.record, 8, value)
 }
 
 type User struct {

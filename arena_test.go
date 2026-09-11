@@ -172,6 +172,63 @@ func TestGrowVectorPreservesElements(t *testing.T) {
 	}
 }
 
+func TestVectorAppendRejectsChangedDescriptor(t *testing.T) {
+	arena, err := NewArena(make([]byte, 128), 0, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := arena.Alloc(12, 4)
+	payload, _ := arena.Alloc(8, 4)
+	region := arena.Region()
+	if err := region.PutVector(root, 0, VectorDesc{Offset: payload, Capacity: 2}); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := region.Vector(root, 0, 4, 4)
+	second, _ := region.Vector(root, 0, 4, 4)
+	if _, err := first.Append(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Append(); !errors.Is(err, ErrStale) {
+		t.Fatalf("second append error = %v, want %v", err, ErrStale)
+	}
+}
+
+func TestRecordDerivedOperationsPreserveRegionProvenance(t *testing.T) {
+	first, _ := NewArena(make([]byte, 128), 0, 128)
+	second, _ := NewArena(make([]byte, 128), 0, 128)
+	firstOffset, _ := first.Alloc(24, 4)
+	secondOffset, _ := second.Alloc(8, 4)
+	parent, _ := first.Region().Record(firstOffset, 24, 4)
+	foreign, _ := second.Region().Record(secondOffset, 8, 4)
+
+	if err := parent.SetReference(0, foreign); !errors.Is(err, ErrRegionMismatch) {
+		t.Fatalf("cross-region reference error = %v, want %v", err, ErrRegionMismatch)
+	}
+	foreignSpan, _, _ := second.ReserveBytes(4, 1)
+	if err := parent.SetRegionSpan(4, foreignSpan); !errors.Is(err, ErrRegionMismatch) {
+		t.Fatalf("cross-region span error = %v, want %v", err, ErrRegionMismatch)
+	}
+	before := second.Used()
+	if err := second.PutRecordUTF8(parent, 4, "wrong arena"); !errors.Is(err, ErrRegionMismatch) {
+		t.Fatalf("cross-region allocation error = %v, want %v", err, ErrRegionMismatch)
+	}
+	if second.Used() != before {
+		t.Fatalf("wrong arena allocated %d bytes", second.Used()-before)
+	}
+
+	child, err := parent.Child(12, 8, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Offset() != parent.Offset()+12 {
+		t.Fatalf("child offset = %d", child.Offset())
+	}
+	first.Reset()
+	if _, err := parent.Child(12, 8, 4); !errors.Is(err, ErrStale) {
+		t.Fatalf("stale child error = %v, want %v", err, ErrStale)
+	}
+}
+
 func TestArenaAlignmentIsRegionRelative(t *testing.T) {
 	arena, err := NewArena(make([]byte, 64), 3, 32)
 	if err != nil {

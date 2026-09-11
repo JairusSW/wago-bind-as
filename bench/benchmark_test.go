@@ -149,7 +149,6 @@ func BenchmarkWagoBindAS(b *testing.B) {
 			instance, call, root := newCall(b, test.body)
 			defer instance.Close()
 			b.ReportAllocs()
-			b.SetBytes(int64(test.body))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				if _, err := call.Call(root); err != nil {

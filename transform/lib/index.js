@@ -38,13 +38,16 @@ export default class BindTransform extends Transform {
                 continue;
             collectDeclarations(source.statements, classes, declarations);
         }
+        for (const declaration of declarations) {
+            if (declaration.name.text.startsWith("__wbas_"))
+                throw new Error(`function ${declaration.name.text} uses the reserved __wbas_ prefix`);
+        }
         const functions = [];
         const boundaryTypes = new Set();
+        const allowedAllocations = new Set();
         for (const declaration of declarations) {
             if (!declaration.is(2 /* CommonFlags.Export */))
                 continue;
-            if (declaration.name.text.startsWith("__wbas_"))
-                throw new Error(`exported binding ${declaration.name.text} uses the reserved __wbas_ prefix`);
             if (declaration.typeParameters?.length)
                 throw new Error(`exported binding ${declaration.name.text} cannot be generic`);
             const parameters = [];
@@ -53,7 +56,7 @@ export default class BindTransform extends Transform {
                 if (parameter.parameterKind != 0 /* ParameterKind.Default */)
                     throw new Error(`exported binding ${declaration.name.text} cannot use optional or rest parameters`);
                 const type = printType(parameter.type);
-                const record = classes.get(type);
+                const record = resolveClass(type, classes, declaration.name.text);
                 if (record) {
                     boundaryTypes.add(type);
                     if (!hasDecorator(record.decorators, "bind"))
@@ -62,7 +65,7 @@ export default class BindTransform extends Transform {
                 parameters.push({ name: parameter.name.text, type: schemaType(type) });
             }
             const writtenResult = printType(declaration.signature.returnType);
-            const resultRecord = classes.get(writtenResult);
+            const resultRecord = resolveClass(writtenResult, classes, declaration.name.text);
             if (resultRecord) {
                 boundaryTypes.add(writtenResult);
                 if (!hasDecorator(resultRecord.decorators, "bind"))
@@ -71,28 +74,36 @@ export default class BindTransform extends Transform {
             if (!isBinding)
                 continue;
             for (const parameter of parameters) {
-                if (!classes.has(parameter.type))
+                if (!resolveClass(parameter.type, classes, declaration.name.text))
                     throw new Error(`binding ${declaration.name.text} mixes record and non-record parameters; scalar boundary parameters are not implemented yet`);
             }
-            const ownsResult = resultRecord
+            if (!resultRecord && writtenResult != "void")
+                throw new Error(`binding ${declaration.name.text} has unsupported result ${writtenResult}; only void or record results are implemented`);
+            const ownership = resultRecord
                 ? resultOwnership(declaration, writtenResult)
-                : false;
+                : { ownsResult: false };
+            if (ownership.allocation)
+                allowedAllocations.add(ownership.allocation);
             functions.push({
                 name: declaration.name.text,
                 parameters,
-                ...(classes.has(writtenResult) ? { result: writtenResult } : {}),
-                ...(ownsResult ? { owns_result: true } : {}),
+                ...(resultRecord ? { result: writtenResult } : {}),
+                ...(ownership.ownsResult ? { owns_result: true } : {}),
             });
         }
-        for (const [name, declaration] of classes) {
-            if (hasDecorator(declaration.decorators, "bind"))
+        for (const [name, candidates] of classes) {
+            const bound = candidates.filter((declaration) => hasDecorator(declaration.decorators, "bind"));
+            if (bound.length > 1)
+                throw new Error(`binding class ${name} has ambiguous type identity`);
+            if (bound.length == 1)
                 boundaryTypes.add(name);
         }
         if (boundaryTypes.size == 0)
             return;
+        rejectUnmanagedAllocations(parser.sources, boundaryTypes, allowedAllocations);
         const types = [];
         for (const name of [...boundaryTypes].sort()) {
-            const declaration = classes.get(name);
+            const declaration = resolveClass(name, classes, "binding surface");
             if (!declaration)
                 throw new Error(`unknown binding record ${name}`);
             types.push(this.lowerClass(declaration));
@@ -149,6 +160,8 @@ export default class BindTransform extends Transform {
             if (field.initializer)
                 throw new Error(`binding field ${declaration.name.text}.${field.name.text} cannot have a field initializer; use a constructor`);
             const written = printType(field.type);
+            if (written == "Utf8" || written == "Bytes")
+                throw new Error(`binding field ${declaration.name.text}.${field.name.text} uses ${written}; descriptor layout is incompatible with native unmanaged class alignment`);
             if (!scalarTypes.has(written))
                 throw new Error(`binding field ${declaration.name.text}.${field.name.text} uses ${written}; the automatic function facade currently accepts scalar record fields`);
             fields.push({ name: field.name.text, type: schemaType(written) });
@@ -202,28 +215,102 @@ function resultOwnership(declaration, resultType) {
     if (!declaration.body || declaration.body.kind != 31 /* NodeKind.Block */)
         throw new Error(`binding ${declaration.name.text} must use a block body so result ownership is explicit`);
     const statements = declaration.body.statements;
-    const returns = statements.filter((statement) => statement.kind == 44 /* NodeKind.Return */);
+    const returns = collectReturns(declaration.body);
     if (returns.length != 1 || statements[statements.length - 1] != returns[0])
         throw new Error(`binding ${declaration.name.text} must end in one direct return until branch result ownership is implemented`);
     const value = returns[0].value;
     if (!value)
         throw new Error(`binding ${declaration.name.text} has no result`);
-    if (value.kind == 18 /* NodeKind.New */)
-        return printTypeName(value.typeName) == resultType;
+    if (value.kind == 18 /* NodeKind.New */) {
+        const allocation = value;
+        if (printTypeName(allocation.typeName) != resultType)
+            throw new Error(`binding ${declaration.name.text} must directly construct ${resultType}`);
+        return { ownsResult: true, allocation };
+    }
     if (value.kind == 7 /* NodeKind.Identifier */) {
         const name = value.text;
         if (declaration.signature.parameters.some((parameter) => parameter.name.text == name &&
             printType(parameter.type) == resultType))
-            return false;
+            return { ownsResult: false };
         throw new Error(`binding ${declaration.name.text} can only return a borrowed parameter or directly construct ${resultType}`);
     }
     throw new Error(`binding ${declaration.name.text} must return a parameter or directly construct ${resultType}`);
+}
+function collectReturns(body) {
+    const returns = [];
+    const seen = new Set();
+    const visit = (node, root) => {
+        if (seen.has(node))
+            return;
+        seen.add(node);
+        if (node.kind == 44 /* NodeKind.Return */) {
+            returns.push(node);
+            return;
+        }
+        if (!root &&
+            (node.kind == 56 /* NodeKind.FunctionDeclaration */ ||
+                node.kind == 15 /* NodeKind.Function */ ||
+                node.kind == 59 /* NodeKind.MethodDeclaration */))
+            return;
+        for (const value of Object.values(node)) {
+            if (value instanceof Node)
+                visit(value, false);
+            else if (Array.isArray(value))
+                for (const child of value)
+                    if (child instanceof Node)
+                        visit(child, false);
+        }
+    };
+    visit(body, true);
+    return returns;
+}
+function resolveClass(type, classes, binding) {
+    if (type.includes("."))
+        throw new Error(`binding ${binding} uses qualified type ${type}; resolved type identity is not implemented`);
+    const candidates = classes.get(type);
+    if (candidates?.length == 1)
+        return candidates[0];
+    if (candidates && candidates.length > 1)
+        throw new Error(`binding ${binding} has ambiguous type identity for ${type}`);
+    if (!scalarTypes.has(type) && type != "void" && /^[A-Z_]/.test(type))
+        throw new Error(`binding ${binding} uses unresolved type ${type}; renamed imports require resolved type identity`);
+    return undefined;
+}
+function rejectUnmanagedAllocations(sources, boundaryTypes, allowed) {
+    const seen = new Set();
+    const visit = (node) => {
+        if (seen.has(node))
+            return;
+        seen.add(node);
+        if (node.kind == 18 /* NodeKind.New */) {
+            const allocation = node;
+            const type = printTypeName(allocation.typeName);
+            if (boundaryTypes.has(type) && !allowed.has(allocation))
+                throw new Error(`allocation of lowered record ${type} is only supported as the direct owned result of a binding; temporary unmanaged allocations are unsafe`);
+        }
+        for (const value of Object.values(node)) {
+            if (value instanceof Node)
+                visit(value);
+            else if (Array.isArray(value))
+                for (const child of value)
+                    if (child instanceof Node)
+                        visit(child);
+        }
+    };
+    for (const source of sources) {
+        if (source.isLibrary)
+            continue;
+        for (const statement of source.statements)
+            visit(statement);
+    }
 }
 function collectDeclarations(statements, classes, functions) {
     for (const statement of statements) {
         if (statement.kind == 52 /* NodeKind.ClassDeclaration */) {
             const declaration = statement;
-            classes.set(declaration.name.text, declaration);
+            const declarations = classes.get(declaration.name.text) || [];
+            declarations.push(declaration);
+            classes.set(declaration.name.text, declarations);
         }
         else if (statement.kind == 56 /* NodeKind.FunctionDeclaration */) {
             functions.push(statement);
@@ -310,19 +397,29 @@ function wrapperSource(functions, typeSizes) {
         const parameters = fn.parameters
             .map((parameter) => `${parameter.name}: ${parameter.type}`)
             .join(", ");
+        const usedNames = new Set(fn.parameters.map((parameter) => parameter.name));
+        const resultName = freshName("__wbas_result", usedNames);
+        usedNames.add(resultName);
+        const valueName = freshName("__wbas_value", usedNames);
         const separator = parameters.length == 0 ? "" : ", ";
         const argumentsList = fn.parameters
             .map((parameter) => parameter.name)
             .join(", ");
         source +=
-            `export function __wbas_call_${fn.name}(${parameters}${separator}__result: ${fn.result}): void {\n` +
-                `  const __value = ${fn.name}(${argumentsList});\n` +
-                `  memory.copy(changetype<usize>(__result), changetype<usize>(__value), ${resultSize});\n`;
+            `export function __wbas_call_${fn.name}(${parameters}${separator}${resultName}: ${fn.result}): void {\n` +
+                `  const ${valueName} = ${fn.name}(${argumentsList});\n` +
+                `  memory.copy(changetype<usize>(${resultName}), changetype<usize>(${valueName}), ${resultSize});\n`;
         if (fn.owns_result)
-            source += `  heap.free(changetype<usize>(__value));\n`;
+            source += `  heap.free(changetype<usize>(${valueName}));\n`;
         source += `}\n`;
     }
     return source;
+}
+function freshName(base, used) {
+    let name = base;
+    while (used.has(name))
+        name += "_";
+    return name;
 }
 function littleEndianWord(hex) {
     return hex.match(/../g).reverse().join("");

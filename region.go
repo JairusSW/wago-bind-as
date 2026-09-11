@@ -37,6 +37,25 @@ func (r Region) checkLive() error {
 	return nil
 }
 
+func (r Region) sameRegion(other Region) error {
+	if err := r.checkLive(); err != nil {
+		return err
+	}
+	if err := other.checkLive(); err != nil {
+		return err
+	}
+	if r.owner != nil || other.owner != nil {
+		if r.owner != other.owner || r.generation != other.generation || r.start != other.start || r.limit != other.limit {
+			return ErrRegionMismatch
+		}
+		return nil
+	}
+	if unsafe.SliceData(r.memory) != unsafe.SliceData(other.memory) || r.start != other.start || r.limit != other.limit {
+		return ErrRegionMismatch
+	}
+	return nil
+}
+
 func (r Region) resolve(offset Offset, size, align uint32, write bool) ([]byte, error) {
 	if err := r.checkLive(); err != nil {
 		return nil, err
@@ -70,6 +89,41 @@ type Record struct {
 
 func (v Record) Offset() Offset { return v.offset }
 
+// Child derives an inline record from this record without discarding region
+// identity or liveness.
+func (v Record) Child(field, size, align uint32) (Record, error) {
+	if _, err := v.field(field, size, align, false); err != nil {
+		return Record{}, err
+	}
+	offset, ok := addOffset(v.offset, field)
+	if !ok {
+		return Record{}, ErrBounds
+	}
+	return Record{region: v.region, offset: offset, size: size}, nil
+}
+
+// Reference resolves a record offset stored in this record within the same
+// region and generation.
+func (v Record) Reference(field, size, align uint32) (Record, error) {
+	offset, err := v.Uint32(field)
+	if err != nil {
+		return Record{}, err
+	}
+	return v.region.Record(Offset(offset), size, align)
+}
+
+// SetReference stores a record reference only when both records belong to the
+// same live region.
+func (v Record) SetReference(field uint32, value Record) error {
+	if err := v.region.sameRegion(value.region); err != nil {
+		return err
+	}
+	if _, err := value.region.resolve(value.offset, value.size, 1, false); err != nil {
+		return err
+	}
+	return v.SetUint32(field, uint32(value.offset))
+}
+
 func (v Record) Bool(field uint32) (bool, error) {
 	n, err := v.Uint8(field)
 	if err != nil {
@@ -88,11 +142,22 @@ func (v Record) SetBool(field uint32, value bool) error {
 }
 
 // RegionSpan resolves an inline span descriptor in this record.
-func (v Record) RegionSpan(field uint32) (SpanView, error) { return v.region.Span(v.offset, field) }
+func (v Record) RegionSpan(field uint32) (SpanView, error) {
+	if _, err := v.field(field, 8, 4, false); err != nil {
+		return SpanView{}, err
+	}
+	return v.region.Span(v.offset, field)
+}
 func (v Record) SetRegionSpan(field uint32, span Span) error {
+	if _, err := v.field(field, 8, 4, true); err != nil {
+		return err
+	}
 	return v.region.PutSpan(v.offset, field, span)
 }
 func (v Record) RegionVector(field, stride, align uint32) (Vector, error) {
+	if _, err := v.field(field, 12, 4, false); err != nil {
+		return Vector{}, err
+	}
 	return v.region.Vector(v.offset, field, stride, align)
 }
 
@@ -195,6 +260,7 @@ func (v Record) SetFloat64(field uint32, n float64) error {
 type Span struct {
 	Offset Offset
 	Length uint32
+	region Region
 }
 type VectorDesc struct {
 	Offset           Offset
@@ -210,7 +276,7 @@ func (r Region) Span(record Offset, field uint32) (SpanView, error) {
 	if err != nil {
 		return SpanView{}, err
 	}
-	d := Span{Offset: Offset(binary.LittleEndian.Uint32(b)), Length: binary.LittleEndian.Uint32(b[4:])}
+	d := Span{Offset: Offset(binary.LittleEndian.Uint32(b)), Length: binary.LittleEndian.Uint32(b[4:]), region: r}
 	if _, err = r.resolve(d.Offset, d.Length, 1, false); err != nil {
 		return SpanView{}, ErrMalformed
 	}
@@ -218,6 +284,9 @@ func (r Region) Span(record Offset, field uint32) (SpanView, error) {
 }
 
 func (r Region) PutSpan(record Offset, field uint32, span Span) error {
+	if err := r.sameRegion(span.region); err != nil {
+		return err
+	}
 	if _, err := r.resolve(span.Offset, span.Length, 1, false); err != nil {
 		return ErrMalformed
 	}
@@ -255,7 +324,7 @@ func (v SpanView) SliceBytes(start, end uint32) (SpanView, error) {
 	if !ok {
 		return SpanView{}, ErrBounds
 	}
-	return SpanView{region: v.region, span: Span{Offset: offset, Length: end - start}}, nil
+	return SpanView{region: v.region, span: Span{Offset: offset, Length: end - start, region: v.region}}, nil
 }
 func (v SpanView) UTF8() (UTF8View, error) {
 	b, err := v.Bytes()
@@ -441,6 +510,15 @@ func (v Vector) At(index uint32) (Record, error) {
 	return v.region.Record(v.offset+Offset(delta), v.stride, v.align)
 }
 func (v *Vector) Append() (Record, error) {
+	descriptor, err := v.region.resolve(v.descriptor, 12, 4, false)
+	if err != nil {
+		return Record{}, err
+	}
+	if Offset(binary.LittleEndian.Uint32(descriptor)) != v.offset ||
+		binary.LittleEndian.Uint32(descriptor[4:]) != v.length ||
+		binary.LittleEndian.Uint32(descriptor[8:]) != v.capacity {
+		return Record{}, ErrStale
+	}
 	if v.length >= v.capacity {
 		return Record{}, ErrOutOfSpace
 	}

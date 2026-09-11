@@ -18,6 +18,16 @@ export function getVelocity(lastTick: Vec3, current: Vec3): Vec3 {
   );
 }
 
+export function reservedLocals(__result: Vec3, __value: Vec3): Vec3 {
+  return new Vec3(__value.x - __result.x, 0, 0);
+}
+
+export function reset(value: Vec3): void {
+  value.x = 0;
+  value.y = 0;
+  value.z = 0;
+}
+
 export function forceAbort(): void {
   abort();
 }

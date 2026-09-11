@@ -50,12 +50,11 @@ test("@bind lowers to an allocation-free unmanaged record", async () => {
     },
   );
   const exports = wasm.instance.exports;
-  assert.equal(exports.requestSize(), 40);
+  assert.equal(exports.requestSize(), 32);
   assert.equal(exports.enabledOffset(), 8);
   assert.equal(exports.flagsOffset(), 12);
   assert.equal(exports.scoreOffset(), 16);
   assert.equal(exports.ratioOffset(), 24);
-  assert.equal(exports.nameOffset(), 32);
   const schema = JSON.parse(
     readFileSync("build/testdata/transform-fixture/schema.json", "utf8"),
   );
@@ -69,7 +68,6 @@ test("@bind lowers to an allocation-free unmanaged record", async () => {
       { name: "flags", type: "u32" },
       { name: "score", type: "f32" },
       { name: "ratio", type: "f64" },
-      { name: "name", type: "utf8" },
     ],
   });
   const generated = spawnSync(
@@ -92,7 +90,7 @@ test("@bind lowers to an allocation-free unmanaged record", async () => {
   assert.equal(manifest.types[0].size, exports.requestSize());
   assert.deepEqual(
     manifest.types[0].fields.map((field) => field.offset),
-    [0, 8, 9, 10, 12, 16, 24, 32],
+    [0, 8, 9, 10, 12, 16, 24],
   );
 });
 
@@ -150,8 +148,9 @@ test("exported record functions generate callable Go bindings in one asc pass", 
   );
   assert.match(generated, /type Vec3 struct|type Vec3 = Vec3Input/);
   assert.match(generated, /func \(m \*Module\) GetVelocity\(/);
+  assert.match(generated, /func \(m \*Module\) Reset\(/);
   assert.match(generated, /PrepareFunction\("__wbas_call_getVelocity"\)/);
-  assert.match(generated, /getVelocityResult uint32/);
+  assert.match(generated, /getVelocityResult\s+uint32/);
   assert.doesNotMatch(generated, /__wbas_free|releaseErr/);
   const wasmModule = new WebAssembly.Module(
     readFileSync("build/testdata/velocity/velocity.wasm"),
@@ -191,6 +190,7 @@ func TestGeneratedVelocityCall(t *testing.T) {
   got, err := module.GetVelocity(Vec3{X: 1, Y: 2, Z: 3}, Vec3{X: 4, Y: 8, Z: 5})
   if err != nil { t.Fatal(err) }
   if got != (Vec3{X: 3, Y: 6, Z: 2}) { t.Fatalf("velocity = %#v", got) }
+  if err := module.Reset(Vec3{X: 1, Y: 2, Z: 3}); err != nil { t.Fatal(err) }
   memorySize := len(instance.Memory().UnsafeBytes())
   for i := 0; i < 10000; i++ {
     if _, err := module.GetVelocity(Vec3{X: 1}, Vec3{X: 2}); err != nil { t.Fatal(err) }
@@ -304,3 +304,151 @@ export class Vec3 {
     /func \(m \*Module\) Subtract\(/,
   );
 });
+
+test("the transform rejects nested record return paths", () => {
+  for (const [name, body] of [
+    ["branch", "if (value.x > 0) return value;"],
+    ["loop", "while (value.x > 0) return value;"],
+  ]) {
+    const result = compileSnippet(
+      `nested-return-${name}`,
+      `class Vec3 { x: f32; constructor(x: f32 = 0) { this.x = x; } }
+export function choose(value: Vec3): Vec3 {
+  ${body}
+  return new Vec3(1);
+}
+`,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(
+      result.stderr + result.stdout,
+      /one direct return|branch result ownership/,
+    );
+  }
+});
+
+test("the transform rejects descriptor fields with incompatible native alignment", () => {
+  const result = compileSnippet(
+    "descriptor-layout",
+    `import { Utf8 } from "../../../assembly/index";
+@bind
+class Message { code: u32; text: Utf8; }
+export function size(): usize { return sizeof<Message>(); }
+`,
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr + result.stdout,
+    /Utf8.*layout|descriptor.*layout/,
+  );
+});
+
+test("the transform rejects non-result allocations of lowered records", () => {
+  const result = compileSnippet(
+    "temporary-allocation",
+    `class Vec3 { x: f32; constructor(x: f32 = 0) { this.x = x; } }
+function temporary(): void { const value = new Vec3(1); }
+export function calculate(input: Vec3): Vec3 {
+  temporary();
+  return new Vec3(input.x);
+}
+`,
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr + result.stdout,
+    /allocation.*Vec3|temporary.*unmanaged/,
+  );
+});
+
+test("the transform rejects unresolved and qualified record identities", () => {
+  const renamed = compileSnippet(
+    "renamed-import",
+    `import { Vec3 as Velocity } from "./model";
+export function copy(value: Velocity): Velocity { return value; }
+`,
+    {
+      "model.ts":
+        "export class Vec3 { x: f32; constructor(x: f32 = 0) { this.x = x; } }\n",
+    },
+  );
+  assert.notEqual(renamed.status, 0);
+  assert.match(
+    renamed.stderr + renamed.stdout,
+    /type identity|renamed|Velocity/,
+  );
+
+  const qualified = compileSnippet(
+    "qualified-type",
+    `namespace Models { export class Vec3 { x: f32; } }
+export function copy(value: Models.Vec3): Models.Vec3 { return value; }
+`,
+  );
+  assert.notEqual(qualified.status, 0);
+  assert.match(
+    qualified.stderr + qualified.stdout,
+    /qualified|type identity|Models\.Vec3/,
+  );
+
+  const ambiguous = compileSnippet(
+    "ambiguous-type",
+    `import { Vec3 } from "./first";
+import "./second";
+export function copy(value: Vec3): Vec3 { return value; }
+`,
+    {
+      "first.ts":
+        "export class Vec3 { x: f32; constructor(x: f32 = 0) { this.x = x; } }\n",
+      "second.ts":
+        "export class Vec3 { y: f32; constructor(y: f32 = 0) { this.y = y; } }\n",
+    },
+  );
+  assert.notEqual(ambiguous.status, 0);
+  assert.match(
+    ambiguous.stderr + ambiguous.stdout,
+    /ambiguous.*Vec3|type identity/,
+  );
+});
+
+test("the transform rejects scalar results instead of treating them as void", () => {
+  const result = compileSnippet(
+    "scalar-result",
+    `class Vec3 { x: f32; }
+export function moving(value: Vec3): bool { return value.x != 0; }
+`,
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr + result.stdout, /result.*bool|unsupported.*bool/);
+});
+
+function compileSnippet(name, source, extraFiles = {}) {
+  const directory = `build/testdata/${name}`;
+  rmSync(directory, { recursive: true, force: true });
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(`${directory}/main.ts`, source);
+  for (const [file, contents] of Object.entries(extraFiles))
+    writeFileSync(`${directory}/${file}`, contents);
+  return spawnSync(
+    process.execPath,
+    [
+      "node_modules/assemblyscript/bin/asc.js",
+      `${directory}/main.ts`,
+      "--transform",
+      "./transform/lib/index.js",
+      "--outFile",
+      `${directory}/module.wasm`,
+      "--runtime",
+      "stub",
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        WAGO_BIND_SCHEMA: `${directory}/schema.json`,
+        WAGO_BIND_MANIFEST: `${directory}/manifest.json`,
+        WAGO_BIND_GO: `${directory}/bindings.bind.go`,
+        WAGO_BIND_PACKAGE: "fixture",
+      },
+    },
+  );
+}

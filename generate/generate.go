@@ -108,6 +108,10 @@ func validateGoNames(manifest schema.Manifest) error {
 		"SchemaFingerprintHex": "schema fingerprint constant",
 		"Fingerprint":          "schema fingerprint function",
 	}
+	if len(manifest.Functions) != 0 {
+		claimed["Module"] = "generated facade type"
+		claimed["Bind"] = "generated facade constructor"
+	}
 	claim := func(identifier, source string) error {
 		if previous, exists := claimed[identifier]; exists {
 			return fmt.Errorf("generated Go identifier %q for %s conflicts with %s", identifier, source, previous)
@@ -163,12 +167,30 @@ func validateGoNames(manifest schema.Manifest) error {
 		}
 	}
 	functions := make(map[string]string, len(manifest.Functions))
+	facadeFields := map[string]string{
+		"mu":     "generated facade mutex",
+		"memory": "generated facade memory",
+	}
 	for _, function := range manifest.Functions {
 		name := exported(function.Name)
 		if previous, exists := functions[name]; exists {
 			return fmt.Errorf("generated Go method %q for function %s conflicts with function %s", name, function.Name, previous)
 		}
 		functions[name] = function.Name
+		field := unexported(name)
+		fields := []string{field}
+		if len(function.Parameters) != 0 {
+			fields = append(fields, field+"Args")
+		}
+		if function.Result != "" {
+			fields = append(fields, field+"Result")
+		}
+		for _, identifier := range fields {
+			if previous, exists := facadeFields[identifier]; exists {
+				return fmt.Errorf("generated Go field %q for function %s conflicts with %s", identifier, function.Name, previous)
+			}
+			facadeFields[identifier] = "function " + function.Name
+		}
 	}
 	return nil
 }
@@ -403,7 +425,7 @@ func emitGoFunction(out *bytes.Buffer, function schema.ResolvedFunction) {
 	}
 	out.WriteString(")\n")
 	if function.Result == "" {
-		out.WriteString("\treturn err\n}\n\n")
+		fmt.Fprintf(out, "\tif err != nil { return err }; if len(results) != 0 { return fmt.Errorf(\"wago-bind-as: invalid %s result arity\") }; return nil\n}\n\n", function.Name)
 	} else {
 		result := exported(function.Result)
 		fmt.Fprintf(out, "\tif err != nil { return %s{}, err }; if len(results) != 0 { return %s{}, fmt.Errorf(\"wago-bind-as: invalid %s result arity\") }; memory = m.memory.UnsafeBytes(); if memory == nil { return %s{}, fmt.Errorf(\"wago-bind-as: memory is closed\") }; value, readErr := read%s(memory, m.%sResult)\n", result, result, function.Name, result, result, field)
@@ -468,7 +490,7 @@ func emitGoBuilderField(out *bytes.Buffer, field schema.ResolvedField, types map
 		return nil
 	}
 	if nested, exists := types[field.Type]; exists {
-		fmt.Fprintf(out, "\t%sView, err := view.%s(arena.Region()); if err != nil { return err }; if err = fill%s(arena, %sView, %s); err != nil { return err }\n", field.Name, name, exported(nested.Name), field.Name, value)
+		fmt.Fprintf(out, "\t%sView, err := view.%s(); if err != nil { return err }; if err = fill%s(arena, %sView, %s); err != nil { return err }\n", field.Name, name, exported(nested.Name), field.Name, value)
 		return nil
 	}
 	if strings.HasPrefix(field.Type, "array<") {
@@ -527,9 +549,9 @@ func emitGoField(out *bytes.Buffer, owner string, field schema.ResolvedField, ty
 		fmt.Fprintf(out, "func (v %sView) Set%s(value bindas.Span) error { return v.record.SetRegionSpan(%d, value) }\n", owner, name, offset)
 		if field.Type == "utf8" {
 			fmt.Fprintf(out, "func (v %sView) %sUTF8() (bindas.UTF8View, error) { value, err := v.%s(); if err != nil { return bindas.UTF8View{}, err }; return value.UTF8() }\n", owner, name, name)
-			fmt.Fprintf(out, "func (v %sView) Set%sString(arena *bindas.Arena, value string) error { span, err := arena.PutUTF8(value); if err != nil { return err }; return v.Set%s(span) }\n\n", owner, name, name)
+			fmt.Fprintf(out, "func (v %sView) Set%sString(arena *bindas.Arena, value string) error { return arena.PutRecordUTF8(v.record, %d, value) }\n\n", owner, name, offset)
 		} else {
-			fmt.Fprintf(out, "func (v %sView) Set%sBytes(arena *bindas.Arena, value []byte) error { span, err := arena.PutBytes(value, 1); if err != nil { return err }; return v.Set%s(span) }\n\n", owner, name, name)
+			fmt.Fprintf(out, "func (v %sView) Set%sBytes(arena *bindas.Arena, value []byte) error { return arena.PutRecordBytes(v.record, %d, value) }\n\n", owner, name, offset)
 		}
 		return nil
 	}
@@ -539,7 +561,7 @@ func emitGoField(out *bytes.Buffer, owner string, field schema.ResolvedField, ty
 			return fmt.Errorf("vector element %q is not a record", inner)
 		}
 		fmt.Fprintf(out, "func (v %sView) %s() (bindas.Vector, error) { return v.record.RegionVector(%d, %d, %d) }\n", owner, name, offset, shape.Size, shape.Align)
-		fmt.Fprintf(out, "func (v %sView) Reserve%s(arena *bindas.Arena, capacity uint32) (bindas.Vector, error) { return arena.GrowVector(v.Offset(), %d, %d, %d, capacity) }\n\n", owner, name, offset, shape.Size, shape.Align)
+		fmt.Fprintf(out, "func (v %sView) Reserve%s(arena *bindas.Arena, capacity uint32) (bindas.Vector, error) { return arena.GrowRecordVector(v.record, %d, %d, %d, capacity) }\n\n", owner, name, offset, shape.Size, shape.Align)
 		if _, isRecord := types[inner]; isRecord {
 			fmt.Fprintf(out, "func (v %sView) %sAt(index uint32) (%sView, error) { vector, err := v.%s(); if err != nil { return %sView{}, err }; record, err := vector.At(index); return %sView{record: record}, err }\n", owner, name, exported(inner), name, exported(inner), exported(inner))
 			fmt.Fprintf(out, "func (v %sView) Append%s() (%sView, error) { vector, err := v.%s(); if err != nil { return %sView{}, err }; record, err := vector.Append(); return %sView{record: record}, err }\n\n", owner, name, exported(inner), name, exported(inner), exported(inner))
@@ -550,12 +572,12 @@ func emitGoField(out *bytes.Buffer, owner string, field schema.ResolvedField, ty
 		if _, exists := types[inner]; !exists {
 			return fmt.Errorf("reference target %q is not a record", inner)
 		}
-		fmt.Fprintf(out, "func (v %sView) %s(region bindas.Region) (%sView, error) { offset, err := v.record.Uint32(%d); if err != nil { return %sView{}, err }; return Open%s(region, bindas.Offset(offset)) }\n", owner, name, exported(inner), offset, exported(inner), exported(inner))
-		fmt.Fprintf(out, "func (v %sView) Set%s(value %sView) error { return v.record.SetUint32(%d, uint32(value.Offset())) }\n\n", owner, name, exported(inner), offset)
+		fmt.Fprintf(out, "func (v %sView) %s() (%sView, error) { record, err := v.record.Reference(%d, %sSize, %sAlign); return %sView{record: record}, err }\n", owner, name, exported(inner), offset, exported(inner), exported(inner), exported(inner))
+		fmt.Fprintf(out, "func (v %sView) Set%s(value %sView) error { return v.record.SetReference(%d, value.record) }\n\n", owner, name, exported(inner), offset)
 		return nil
 	}
 	if nested, exists := types[field.Type]; exists {
-		fmt.Fprintf(out, "func (v %sView) %s(region bindas.Region) (%sView, error) { return Open%s(region, v.Offset()+%d) }\n\n", owner, name, exported(nested.Name), exported(nested.Name), offset)
+		fmt.Fprintf(out, "func (v %sView) %s() (%sView, error) { record, err := v.record.Child(%d, %sSize, %sAlign); return %sView{record: record}, err }\n\n", owner, name, exported(nested.Name), offset, exported(nested.Name), exported(nested.Name), exported(nested.Name))
 		return nil
 	}
 	if field.Type == "uuid" || field.Type == "digest256" || strings.HasPrefix(field.Type, "array<") {

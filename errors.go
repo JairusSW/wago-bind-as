@@ -9,6 +9,7 @@ var (
 	ErrMalformed       = errors.New("wago-bind-as: malformed descriptor")
 	ErrOutOfSpace      = errors.New("wago-bind-as: region is out of space")
 	ErrReadOnly        = errors.New("wago-bind-as: region is read-only")
+	ErrRegionMismatch  = errors.New("wago-bind-as: values belong to different regions")
 	ErrStale           = errors.New("wago-bind-as: region view is stale")
 	ErrSchema          = errors.New("wago-bind-as: schema mismatch")
 	ErrValidationLimit = errors.New("wago-bind-as: validation work limit exceeded")

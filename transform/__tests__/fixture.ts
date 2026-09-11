@@ -1,5 +1,3 @@
-import { Utf8 } from "../../assembly/index";
-
 @bind
 class Request {
   id: u64;
@@ -9,7 +7,6 @@ class Request {
   flags: u32;
   score: f32;
   ratio: f64;
-  name: Utf8;
 
   @inline
   bump(): void {
@@ -36,10 +33,6 @@ export function scoreOffset(): u32 {
 
 export function ratioOffset(): u32 {
   return offsetof<Request>("ratio");
-}
-
-export function nameOffset(): u32 {
-  return offsetof<Request>("name");
 }
 
 export function inspect(request: Request): void {
