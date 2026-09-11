@@ -638,7 +638,8 @@ function __wbasVectorAppend(base: usize, length: u32, descriptor: usize, stride:
 		}
 		out.WriteString("}\n\n")
 	}
-	return out.Bytes(), nil
+	output := bytes.TrimRight(out.Bytes(), "\n")
+	return append(output, '\n'), nil
 }
 
 func goByteList(value []byte) string {

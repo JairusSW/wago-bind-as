@@ -49,6 +49,20 @@ func TestCommittedRequestBindingsAreCurrent(t *testing.T) {
 	assertFile("bindings_gen.ts", asOutput)
 }
 
+func TestAssemblyScriptHasSingleFinalNewline(t *testing.T) {
+	manifest, err := schema.Compile(schema.Schema{Package: "newline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := AssemblyScript(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(output, []byte("\n")) || bytes.HasSuffix(output, []byte("\n\n")) {
+		t.Fatalf("generated AssemblyScript must end in exactly one newline")
+	}
+}
+
 func TestFixedArrayBuilderRequiresExactBytes(t *testing.T) {
 	manifest, err := schema.Compile(schema.Schema{Package: "arrays", Types: []schema.Type{{Name: "Value", Fields: []schema.Field{{Name: "words", Type: "array<u32, 3>"}}}}})
 	if err != nil {

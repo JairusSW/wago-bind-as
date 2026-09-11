@@ -14,6 +14,7 @@ function __wbasVectorAt(base: usize, length: u32, descriptor: usize, stride: u32
   if (count > capacity || bytes > u32.MAX_VALUE || offset > length || <u32>bytes > length - offset || (offset & (alignment - 1)) != 0 || index >= count) return u32.MAX_VALUE;
   return offset + index * stride;
 }
+
 function __wbasVectorAppend(base: usize, length: u32, descriptor: usize, stride: u32, alignment: u32): u32 {
   if (descriptor > length || 12 > length - <u32>descriptor || stride == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0) return u32.MAX_VALUE;
   const offset = load<u32>(base + descriptor);
